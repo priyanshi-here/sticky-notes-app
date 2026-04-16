@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sticky Notes App</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f0f8ff; }
+        .board { position: relative; width: 100%; min-height: 600px; border: 2px dashed #ccc; background: white; margin-top: 20px; padding: 20px; }
+        .note { position: absolute; width: 200px; min-height: 100px; padding: 10px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); resize: both; overflow: auto; cursor: move; font-size: 14px; }
+        .note textarea { width: 100%; height: 80px; border: none; background: transparent; resize: none; font-family: inherit; }
+        .controls { margin-bottom: 20px; }
+        button { padding: 8px 16px; margin-right: 10px; border: none; border-radius: 4px; cursor: pointer; }
+        #board-id { padding: 8px; }
+        .yellow { background: #fff9c4; }
+        .blue { background: #bbdefb; }
+        .green { background: #c8e6c9; }
+        .pink { background: #f8bbd9; }
+    </style>
+</head>
+<body>
+    <h1>Sticky Notes App (Restored)</h1>
+    <div class="controls">
+        <input type="number" id="board-id" value="1" min="1" placeholder="Board ID">
+        <button onclick="loadBoard()">Load Board</button>
+        <button onclick="createBoard()">New Board</button>
+        <button onclick="addNote()">Add Note</button>
+    </div>
+    <div id="board" class="board"></div>
+    <script>
+        let currentBoardId = 1;
+        let ws = null;
+        let dragNote = null;
+
+        async function api(path, options = {}) {
+            const res = await fetch(`http://127.0.0.1:8000${path}`, options);
+            if (!res.ok) throw new Error(await res.text());
+            return res.json();
+        }
+
+        async function createBoard() {
+            const board = await api('/boards/');
+            currentBoardId = board.id;
+            document.getElementById('board-id').value = board.id;
+            loadBoard();
+        }
+
+        async function loadBoard() {
+            currentBoardId = parseInt(document.getElementById('board-id').value) || 1;
+            try {
+                const board = await api(`/boards/${currentBoardId}`);
+                console.log('Board:', board);
+                const notes = await api(`/boards/${currentBoardId}/notes/`);
+                renderNotes(notes);
+                connectWS();
+            } catch (e) {
+                console.error('Load error:', e);
+                createBoard();
+            }
+        }
+
+        function renderNotes(notes) {
+            const board = document.getElementById('board');
+            board.innerHTML = '';
+            notes.forEach(note => {
+                const noteEl = createNoteElement(note);
+                board.appendChild(noteEl);
+            });
+        }
+
+        function createNoteElement(note) {
+            const noteEl = document.createElement('div');
+            noteEl.className = `note ${note.color}`;
+            noteEl.style.left = note.x + 'px';
+            noteEl.style.top = note.y + 'px';
+            noteEl.dataset.id = note.id;
+            noteEl.innerHTML = `<textarea>${note.content}</textarea>`;
+            noteEl.draggable = true;
+            noteEl.addEventListener('dragstart', (e) => dragNote = noteEl);
+            noteEl.addEventListener('dragover', (e) => e.preventDefault());
+            noteEl.addEventListener('drop', handleDrop);
+            noteEl.querySelector('textarea').addEventListener('input', (e) => updateNote(note.id, e.target.value));
+            return noteEl;
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            if (dragNote) {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = e.clientX - rect.left - 100;
+                const y = e.clientY - rect.top - 50;
+                updateNote(dragNote.dataset.id, null, x, y);
+                dragNote.style.left = x + 'px';
+                dragNote.style.top = y + 'px';
+            }
+        }
+
+        async function addNote() {
+            const content = prompt('Note content:') || 'New note';
+            await api(`/boards/${currentBoardId}/notes/`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({content, color: 'yellow', x: 50, y: 50})
+            });
+            loadBoard();
+        }
+
+        async function updateNote(id, content = null, x = null, y = null) {
+            await api(`/notes/${id}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({content, x, y})
+            });
+        }
+
+        function connectWS() {
+            if (ws) ws.close();
+            ws = new WebSocket(`ws://127.0.0.1:8000/ws/${currentBoardId}`);
+            ws.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data);
+                    if (data.type === 'note_created') loadBoard();
+                    else if (data.type === 'note_updated') loadBoard();
+                    else if (data.type === 'note_deleted') loadBoard();
+                } catch {}
+            };
+        }
+
+        // Init
+        loadBoard();
+    </script>
+</body>
+</html>
+

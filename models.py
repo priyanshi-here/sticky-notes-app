@@ -5,6 +5,13 @@ from datetime import datetime
 
 Base = declarative_base()
 
+# Import after Base definition to avoid circular import
+from database import engine
+
+async def create_tables():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
 class Board(Base):
     __tablename__ = "boards"
 
